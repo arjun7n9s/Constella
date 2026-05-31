@@ -144,6 +144,29 @@ object ScanConstants {
     object Segmentation {
 
         /**
+         * Dot-to-grid snap tolerance. During cell grid clustering each accepted
+         * dot is snapped to the nearest of a candidate cell's six 2-column by
+         * 3-row grid positions; a dot is accepted onto a position only when it
+         * lies within this factor times the estimated dot pitch of that
+         * position. The same factor expands a cell's grid footprint when
+         * gathering candidate dots, so a dot sitting inside a cell's footprint
+         * but off every grid position is excluded as noise rather than seeding a
+         * spurious cell.
+         *
+         * Kept strictly below `1.0` (and recommended at or below `0.5`) so the
+         * snap regions of two adjacent grid positions — which are one pitch
+         * apart — do not overlap, keeping each dot's assignment unambiguous.
+         *
+         * Unitless factor applied to the estimated dot pitch. The requirements
+         * pin only that the 2x3 grouping exists (Req 5.1), not this tolerance,
+         * so this is an initial calibration default tunable against the
+         * evaluation sets (Req 13).
+         *
+         * _Requirements: 5.1_
+         */
+        const val DOT_SNAP_TOLERANCE_FACTOR: Float = 0.5f
+
+        /**
          * Line-grouping vertical tolerance. Cells whose vertical centers lie
          * within this factor times the median cell height of each other are
          * grouped into a common line (half the median cell height).
@@ -230,6 +253,12 @@ object ScanConstants {
         require(Timing.DOCUMENT_EXIT_REACTION_MS > 0) { "DOCUMENT_EXIT_REACTION_MS must be positive" }
         require(Timing.GUIDANCE_CHANGE_DEADLINE_MS > 0) { "GUIDANCE_CHANGE_DEADLINE_MS must be positive" }
 
+        require(Segmentation.DOT_SNAP_TOLERANCE_FACTOR > 0f) {
+            "DOT_SNAP_TOLERANCE_FACTOR must be positive"
+        }
+        require(Segmentation.DOT_SNAP_TOLERANCE_FACTOR < 1f) {
+            "DOT_SNAP_TOLERANCE_FACTOR must be below 1 so adjacent grid-position snap regions do not overlap"
+        }
         require(Segmentation.LINE_GROUPING_CELL_HEIGHT_FACTOR > 0f) {
             "LINE_GROUPING_CELL_HEIGHT_FACTOR must be positive"
         }
