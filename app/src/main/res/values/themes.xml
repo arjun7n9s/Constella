@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Base application theme. A Material3 "DayNight" NoActionBar theme is used
+        because the UI is rendered with Jetpack Compose; the actual colors,
+        typography, and spacing are owned by the Compose Theming_Layer
+        (Design_Tokens), not by XML.
+    -->
+    <style name="Theme.BrailleScanner" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
