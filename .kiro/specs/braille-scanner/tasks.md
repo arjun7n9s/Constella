@@ -8,19 +8,19 @@ Property-based tests (marked optional with `*`) implement the 35 Correctness Pro
 
 ## Tasks
 
-- [ ] 1. Project setup, core data models, and shared configuration
+- [x] 1. Project setup, core data models, and shared configuration
   - [x] 1.1 Set up the Android project structure and layering
     - Create the Kotlin + Jetpack Compose project with the four-layer structure (UI, Domain, Pipeline, Native/runtime) and module boundaries that point downward only
     - Add Gradle dependencies and `jniLibs`/assets placeholders for CameraX, OpenCV, TFLite runtime, and liblouis
     - Configure the JVM property-testing framework (kotest-property or jqwik) and the instrumented/unit test source sets
     - _Requirements: 15.1, 19.2_
 
-  - [~] 1.2 Implement core data models and enums
+  - [x] 1.2 Implement core data models and enums
     - Implement `Confidence` (clamped [0,1]), `BrailleDots` (subset of {1..6}), `DetectedDot`, `BrailleCell`, `TextLine`, `SegmentedDocument`, `RecognizedCell`, `CharSpan`, `ScanResult`, and the `ScanStatus` sealed interface
     - Implement the `ScanningMode`, `CaptureMode`, `Grade`, and `GradeMode` enums
     - _Requirements: 4.3, 4.7, 5.1, 6.2, 6.3, 10.2_
 
-  - [~] 1.3 Implement the centralized threshold and constants configuration
+  - [x] 1.3 Implement the centralized threshold and constants configuration
     - Implement the `ConfidenceThresholds` object (min dot-detection, cell-confidence, display-confidence, rescan-recommendation) and the spacing/timing constants (half median cell height, 1.5× median spacing, 5–25 cm, 25%/90% fill, 2% movement, 20% luminance, 15° tilt, 750 ms debounce, 500 ms reaction) as a single source of truth
     - _Requirements: 2.10, 4.3, 5.5, 6.3, 10.3, 14.2_
 
