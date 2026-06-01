@@ -13,6 +13,14 @@ captures/
 
 # Kotlin
 .kotlin/
+domain/bin/
+
+# Signing / secrets
+*.jks
+*.keystore
+keystore.properties
+secrets.properties
+
 
 # Signing / secrets
 *.jks
@@ -27,3 +35,10 @@ Thumbs.db
 # Logs / temp
 *.log
 *.tmp
+
+# Ignore md files except README
+*.md
+!README.md
+
+# Ignore kiro
+.kiro/

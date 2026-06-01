@@ -115,6 +115,70 @@ class LiblouisTranslationEngineTest {
         LiblouisTranslationEngine(dir, backend).translate(cells("a"), Grade.GRADE_1)
     }
 
+    // --- untranslatable-cell reporting (Req 7.5) -----------------------------
+
+    @Test
+    fun untranslatableCellsAreEmptyWhenAllCellsTranslate() {
+        val dir = tablesWith("en-us-g1.ctb", "en-us-g2.ctb")
+        // Fake liblouis: both cells produce real text, no pass-through Braille chars.
+        val backend = FakeBackend(
+            loaded = true,
+            result = NativeBackTranslation("ab", intArrayOf(0, 1)),
+        )
+        val engine = LiblouisTranslationEngine(tablesDirectory = dir, bridge = backend)
+
+        val output = engine.translate(cells("ab"), Grade.GRADE_1)
+
+        assertEquals(emptyList<Int>(), output.untranslatableCells)
+    }
+
+    @Test
+    fun untranslatableCellsArePopulatedWhenLiblouisEchoesPassthroughBrailleChars() {
+        val dir = tablesWith("en-us-g1.ctb", "en-us-g2.ctb")
+        // Fake liblouis: cell 0 -> "a" (translated), cell 1 -> echoed Braille char
+        // (U+2836 = dots 2-3-5-6, a pattern liblouis could not translate).
+        val echoedChar = '\u2836'
+        val backend = FakeBackend(
+            loaded = true,
+            result = NativeBackTranslation("a$echoedChar", intArrayOf(0, 1)),
+        )
+        val engine = LiblouisTranslationEngine(tablesDirectory = dir, bridge = backend)
+
+        val output = engine.translate(cells("ab"), Grade.GRADE_1)
+
+        // Cell 1 was echoed verbatim -> must appear in untranslatableCells.
+        assertEquals(listOf(1), output.untranslatableCells)
+        // The translated text must not include the echoed Braille char.
+        assertEquals("a", output.text)
+    }
+
+    @Test
+    fun multipleUntranslatableCellsAreReportedSortedAndDeduped() {
+        val dir = tablesWith("en-us-g1.ctb", "en-us-g2.ctb")
+        // Cells 0 and 2 are echoed; cell 1 translates to "b".
+        val e = '\u2836'
+        val backend = FakeBackend(
+            loaded = true,
+            result = NativeBackTranslation("${e}b${e}", intArrayOf(0, 1, 2)),
+        )
+        val engine = LiblouisTranslationEngine(tablesDirectory = dir, bridge = backend)
+
+        val output = engine.translate(cells("abc"), Grade.GRADE_1)
+
+        assertEquals(listOf(0, 2), output.untranslatableCells)
+        assertEquals("b", output.text)
+    }
+
+    @Test
+    fun untranslatableCellsAreEmptyForEmptyInput() {
+        val backend = FakeBackend(loaded = false)
+        val engine = LiblouisTranslationEngine(tablesDirectory = null, bridge = backend)
+
+        val output = engine.translate(emptyList(), Grade.GRADE_1)
+
+        assertEquals(emptyList<Int>(), output.untranslatableCells)
+    }
+
     // --- helpers -------------------------------------------------------------
 
     private fun tablesWith(vararg fileNames: String): File {

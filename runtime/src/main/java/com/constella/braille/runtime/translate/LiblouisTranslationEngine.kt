@@ -9,7 +9,9 @@ import com.constella.braille.domain.translate.BrailleUnicode
 import com.constella.braille.domain.translate.CharSpanAssembler
 import com.constella.braille.domain.translate.TranslationEngine
 import com.constella.braille.domain.translate.TranslationOutput
+import com.constella.braille.domain.translate.TranslationSegment
 import com.constella.braille.domain.translate.TranslationUnavailableException
+import com.constella.braille.domain.translate.UntranslatableDetection
 import java.io.File
 
 /**
@@ -91,11 +93,36 @@ class LiblouisTranslationEngine(
             )
 
         val cellConfidences: List<Confidence> = cells.map { it.confidence }
-        val segments = BackTranslationMapper.toSegments(
+
+        // Detect which source cells liblouis echoed verbatim (pass-through Braille
+        // characters) instead of translating them — these are the untranslatable cells
+        // (Req 7.5). BackTranslationMapper marks every segment translatable, so we
+        // identify the untranslatable indices here and patch those segments afterward.
+        val untranslatableIndices: Set<Int> = UntranslatableDetection
+            .untranslatableCellIndices(result.text, result.inputPositions)
+            .toHashSet()
+
+        val rawSegments = BackTranslationMapper.toSegments(
             outputText = result.text,
             inputPositions = result.inputPositions,
             cellConfidences = cellConfidences,
         )
+
+        // Reclassify segments whose sole cell ref is an untranslatable index.
+        // A segment is untranslatable iff every one of its cell refs is in the
+        // untranslatable set (for Grade 1 each segment has exactly one ref).
+        val segments: List<TranslationSegment> = if (untranslatableIndices.isEmpty()) {
+            rawSegments
+        } else {
+            rawSegments.map { seg ->
+                if (seg.cellRefs.isNotEmpty() && seg.cellRefs.all { it in untranslatableIndices }) {
+                    seg.copy(text = "", translatable = false)
+                } else {
+                    seg
+                }
+            }
+        }
+
         return CharSpanAssembler.assemble(segments)
     }
 }

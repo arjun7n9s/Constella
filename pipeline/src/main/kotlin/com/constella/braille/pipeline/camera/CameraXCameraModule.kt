@@ -4,11 +4,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.os.Looper
 import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
@@ -67,21 +69,30 @@ import kotlin.coroutines.resumeWithException
  *    the highest-available resolution strategy — the CameraX equivalent of
  *    [CameraPolicy.selectStillResolution].
  *
- * The minimal [CameraState] surface here is deliberately small; task 18.2 adds
- * the typed `NoTorch`/`PermissionDenied`/`NoMacroFocus`/`Unavailable`/
- * `CaptureFailed` states with recovery controls.
+ * Typed error states: capability/permission/capture failures are classified
+ * into a [CameraError] and emitted as a [CameraState.Error] built through
+ * [CameraErrorPolicy], which decides the dual-channel message, the recovery
+ * control, and whether the preview is preserved (Req 1.6, 1.7, 1.9, 1.10,
+ * 1.11). This class only *detects* the condition; the deterministic
+ * error-to-presentation mapping lives in the pure [CameraErrorPolicy].
  *
  * @param context an application [Context] used to obtain the camera provider.
  * @param analysisExecutor executor on which analysis frames and capture
  *   callbacks are delivered; defaults to a dedicated single thread so the
  *   pipeline never blocks the main thread.
+ * @param hasCameraPermission predicate used to distinguish a permission denial
+ *   (Req 1.7) from a generic unavailability (Req 1.10) when binding fails;
+ *   defaults to assuming the permission was granted so the caller can supply
+ *   the device's real permission state.
  *
- * _Requirements: 1.2, 1.3, 1.4, 1.5, 1.8_
+ * _Requirements: 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11_
  */
-@OptIn(ExperimentalCamera2Interop::class)
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+@android.annotation.SuppressLint("UnsafeOptInUsageError")
 class CameraXCameraModule(
     private val context: Context,
     private val analysisExecutor: Executor = Executors.newSingleThreadExecutor(),
+    private val hasCameraPermission: () -> Boolean = { true },
 ) : CameraModule {
 
     private val _previewState = MutableStateFlow<CameraState>(CameraState.Starting)
@@ -178,9 +189,22 @@ class CameraXCameraModule(
                 torchEnabled = CameraPolicy.resolveTorchEnabled(scanningMode, torchPreference),
                 focusDistanceCm = CameraPolicy.clampWorkingDistanceCm(workingDistanceCm),
             )
+
+            // Non-fatal capability errors are surfaced *after* the preview is
+            // live so the preview is preserved underneath the message
+            // (Req 1.6, 1.9). detectCapabilityError() returns the highest-
+            // priority missing capability, or null when the camera is fully
+            // capable.
+            detectCapabilityError(bound)?.let { _previewState.value = CameraState.error(it) }
         } catch (t: Throwable) {
-            // Minimal error surface for 18.1; typed kinds + recovery come in 18.2.
-            _previewState.value = CameraState.Error(t.message ?: "Camera could not be started")
+            // Distinguish a denied permission (Req 1.7, open settings) from a
+            // generic non-permission unavailability (Req 1.10, retry).
+            val kind = if (!hasCameraPermission()) {
+                CameraError.PERMISSION_DENIED
+            } else {
+                CameraError.UNAVAILABLE
+            }
+            _previewState.value = CameraState.error(kind)
         }
     }
 
@@ -221,7 +245,12 @@ class CameraXCameraModule(
 
     override suspend fun captureStill(): Result<CapturedImage> {
         val capture = imageCapture
-            ?: return Result.failure(IllegalStateException("Camera is not started"))
+            ?: run {
+                // No capture use case bound: treat as a capture failure, keep
+                // the preview (Req 1.11), and surface the typed state.
+                emitCaptureFailed()
+                return Result.failure(IllegalStateException("Camera is not started"))
+            }
         return suspendCancellableCoroutine { cont ->
             capture.takePicture(
                 analysisExecutor,
@@ -230,6 +259,7 @@ class CameraXCameraModule(
                         try {
                             cont.resume(Result.success(image.toCapturedImage()))
                         } catch (t: Throwable) {
+                            emitCaptureFailed()
                             cont.resume(Result.failure(t))
                         } finally {
                             image.close()
@@ -237,6 +267,8 @@ class CameraXCameraModule(
                     }
 
                     override fun onError(exception: ImageCaptureException) {
+                        // Req 1.11: inform + preserve preview + allow retry.
+                        emitCaptureFailed()
                         cont.resume(Result.failure(exception))
                     }
                 },
@@ -298,6 +330,53 @@ class CameraXCameraModule(
                 focusDistanceCm = CameraPolicy.clampWorkingDistanceCm(workingDistanceCm),
             )
         }
+    }
+
+    /**
+     * Emits the typed [CameraError.CAPTURE_FAILED] state (Req 1.11). Because the
+     * policy marks this error as preview-preserving, the existing preview
+     * binding is left untouched; only the observable state changes so the UI can
+     * show the message and a retry control over the still-live preview.
+     */
+    private fun emitCaptureFailed() {
+        _previewState.value = CameraState.error(CameraError.CAPTURE_FAILED)
+    }
+
+    /**
+     * Inspects a freshly bound [camera] for the non-fatal capability gaps that
+     * must be surfaced while scanning continues, returning the highest-priority
+     * [CameraError] or `null` when the camera is fully capable.
+     *
+     * Missing close-range focus (Req 1.9) is reported before a missing Torch
+     * (Req 1.6): without macro focus the dots are out of focus regardless of
+     * lighting, so it is the more actionable instruction. Both are
+     * preview-preserving per [CameraErrorPolicy].
+     */
+    private fun detectCapabilityError(camera: Camera): CameraError? = when {
+        !supportsCloseRangeFocus(camera) -> CameraError.NO_MACRO_FOCUS
+        !camera.cameraInfo.hasFlashUnit() -> CameraError.NO_TORCH
+        else -> null
+    }
+
+    /**
+     * True when the active [camera] exposes a minimum focus distance near enough
+     * to cover the supported close-range working window (Req 1.4). A reported
+     * minimum focus distance of `0` means the lens is fixed-focus (effectively
+     * focused at infinity) and cannot engage macro focus, so this returns
+     * `false` and the caller surfaces [CameraError.NO_MACRO_FOCUS] (Req 1.9).
+     */
+    private fun supportsCloseRangeFocus(camera: Camera): Boolean {
+        val minFocusDiopters = runCatching {
+            Camera2CameraInfo.from(camera.cameraInfo)
+                .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+        }.getOrNull() ?: return true // Unknown: don't raise a false alarm.
+
+        // A fixed-focus lens reports 0 (infinity only) and cannot focus close.
+        if (minFocusDiopters <= 0f) return false
+
+        // The lens can focus at least as near as our nearest working distance
+        // when its largest supported diopter value reaches that point.
+        return minFocusDiopters >= CameraPolicy.maxFocusDiopters
     }
 
     private suspend fun awaitCameraProvider(): ProcessCameraProvider =
